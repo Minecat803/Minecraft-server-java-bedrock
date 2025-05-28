@@ -1,0 +1,18 @@
+# Server Properties Template
+
+# Network
+server-port=25565
+online-mode=false
+
+# Bedrock Support
+enable-geyser=true
+geyser-bedrock-port=19132
+geyser-bedrock-address=0.0.0.0
+
+# World
+level-type=default
+gamemode=survival
+difficulty=normal
+max-players=20
+
+# Resource packs will be auto-added

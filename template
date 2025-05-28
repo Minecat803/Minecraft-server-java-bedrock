@@ -1,0 +1,13 @@
+minecraft-server/
+├── docker/
+│   ├── Dockerfile
+│   ├── configure-server.sh
+│   └── deploy-addons.sh
+├── scripts/
+│   └── fetch-addons.sh
+├── data/
+│   ├── mods/          # All mods/addons go here
+│   ├── worlds/        # Server worlds
+│   ├── config/        # Server configuration
+│   └── server.properties.template
+└── docker-compose.yml

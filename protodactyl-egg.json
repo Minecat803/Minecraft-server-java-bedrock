@@ -1,0 +1,46 @@
+{
+    "id": "docker-minecraft-hybrid",
+    "name": "Docker Minecraft Hybrid",
+    "description": "Minecraft server with Java+Bedrock support, mods/plugins, and automatic addon fetching",
+    "docker_image": "quay.io/pterodactyl/core:java-17",
+    "config": {
+        "files": "[]",
+        "startup": {
+            "done": "]: Done (",
+            "user_interaction": [],
+            "strip_ansi": false
+        },
+        "stop": "stop",
+        "logs": {
+            "custom": true,
+            "location": "logs/latest.log"
+        },
+        "file_denylist": [],
+        "extends": null
+    },
+    "startup": "./start.sh",
+    "scripts": {
+        "installation": {
+            "script": "#!/bin/bash\n# Create directory structure\nmkdir -p mods worlds config\n\n# Create startup script\ncat > start.sh << 'EOF'\n#!/bin/bash\n\n# Download addons if specified\nif [ -n \"${ADDON_URLS}\" ]; then\n    IFS=',' read -ra URLS <<< \"${ADDON_URLS}\"\n    for url in \"${URLS[@]}\"; do\n        echo \"Downloading addon: $url\"\n        filename=$(basename \"$url\")\n        wget -O \"mods/$filename\" \"$url\"\n        \n        # Extract if it's a zip file\n        if [[ \"$filename\" == *.zip ]]; then\n            echo \"Extracting: $filename\"\n            unzip -q \"mods/$filename\" -d \"mods/${filename%.*}\"\n            rm \"mods/$filename\"\n        fi\n    done\nfi\n\n# Start Docker container\ndocker run -d --name mc-server \\\n  -p 25565:25565 \\\n  -p 19132:19132/udp \\\n  -v $PWD/mods:/server/mods \\\n  -v $PWD/worlds:/server/worlds \\\n  -v $PWD/config:/server/config \\\n  -e JAVA_MEM=\"Xms${SERVER_MEMORY}M Xmx${SERVER_MEMORY}M\" \\\n  -e EULA=\"TRUE\" \\\n  --restart unless-stopped \\\n  yourusername/minecraft-hybrid:latest\n\n# Follow container logs\ndocker logs -f mc-server\nEOF\n\nchmod +x start.sh\n\n# Create Dockerfile\ncat > Dockerfile << 'EOF'\nFROM eclipse-temurin:17-jdk\n\nRUN apt-get update && apt-get install -y \\\n    wget \\\n    unzip \\\n    jq \\\n    gettext-base \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN mkdir -p /server/mods /server/config /server/worlds\n\nARG MC_VERSION=1.20.1\nRUN wget -O /server/server.jar \\\n    \"$(curl -s https://mohistmc.com/api/$MC_VERSION | jq -r '.url')\"\n\nCOPY deploy-addons.sh /server/\nCOPY configure-server.sh /server/\nRUN chmod +x /server/*.sh\n\nWORKDIR /server\nEXPOSE 25565 19132/udp\n\nCMD [\"/bin/bash\", \"-c\", \"./deploy-addons.sh && ./configure-server.sh && java -${JAVA_MEM} -jar server.jar --nogui\"]\nEOF\n\n# Create configuration scripts\ncat > deploy-addons.sh << 'EOF'\n#!/bin/bash\n\nfind /server/mods -type f \\( -iname \"*.mcaddon\" -o -iname \"*.mcpack\" \\) -print0 | while IFS= read -r -d $'\\0' file; do\n    echo \"Processing addon: $file\"\n    \n    TEMP_DIR=$(mktemp -d)\n    unzip -q \"$file\" -d \"$TEMP_DIR\"\n    \n    find \"$TEMP_DIR\" -type f \\( -iname \"*.jar\" -o -iname \"*.json\" -o -iname \"*.js\" -o -iname \"*.zip\" \\) \\\n        -exec mv -t /server/mods/ {} +\n    \n    rm -rf \"$TEMP_DIR\"\n    rm \"$file\"\n    echo \"Addon deployed: $file\"\ndone\n\nchown -R 1000:1000 /server/mods\nEOF\n\ncat > configure-server.sh << 'EOF'\n#!/bin/bash\n\nif [ ! -f /server/mods/geyser.jar ]; then\n    wget -O /server/mods/geyser.jar \\\n        \"https://ci.opencollab.dev/job/GeyserMC/job/Geyser/job/master/lastSuccessfulBuild/artifact/bootstrap/spigot/target/Geyser-Spigot.jar\"\nfi\n\nif [ ! -f /server/mods/floodgate.jar ]; then\n    wget -O /server/mods/floodgate.jar \\\n        \"https://ci.opencollab.dev/job/GeyserMC/job/Floodgate/job/master/lastSuccessfulBuild/artifact/spigot/target/floodgate-spigot.jar\"\nfi\n\nRESOURCE_PACKS=$(find /server/mods -type f -iname \"*.zip\")\nif [ -n \"$RESOURCE_PACKS\" ]; then\n    FIRST_PACK=$(echo \"$RESOURCE_PACKS\" | head -n1)\n    PACK_NAME=$(basename \"$FIRST_PACK\")\n    \n    if [ -f /server/server.properties.template ]; then\n        envsubst < /server/server.properties.template > /server/server.properties\n    fi\n    echo \"resource-pack=mods/$PACK_NAME\" >> /server/server.properties\n    echo \"require-resource-pack=true\" >> /server/server.properties\nfi\n\nfind /server/mods -type f -iname \"manifest.json\" | while read manifest; do\n    if jq -e '.modules[] | select(.type == \"data\")' \"$manifest\" >/dev/null; then\n        PACK_DIR=$(dirname \"$manifest\")\n        PACK_NAME=$(basename \"$PACK_DIR\")\n        echo \"Registering behavior pack: $PACK_NAME\"\n        \n        for world in /server/worlds/*; do\n            mkdir -p \"$world/behavior_packs\"\n            ln -sf \"$PACK_DIR\" \"$world/behavior_packs/$PACK_NAME\"\n        done\n    fi\ndone\n\nfind /server/mods -type f \\( -iname \"*.jar\" -o -iname \"*.zip\" \\) | \\\n    awk -F/ '{print $NF}' > /server/config/mods-list.txt\n\nif [ ! -f /server/eula.txt ] || ! grep -q 'eula=true' /server/eula.txt; then\n    echo \"eula=true\" > /server/eula.txt\nfi\nEOF\n\nchmod +x deploy-addons.sh configure-server.sh\n\n# Build Docker image\ndocker build -t yourusername/minecraft-hybrid:latest .\n",
+            "container": "java-17"
+        }
+    },
+    "variables": [
+        {
+            "name": "SERVER_VERSION",
+            "description": "Minecraft version",
+            "env_variable": "SERVER_VERSION",
+            "default_value": "1.20.1",
+            "user_editable": true,
+            "rules": "required|string"
+        },
+        {
+            "name": "ADDON_URLS",
+            "description": "Comma-separated list of addon URLs to download",
+            "env_variable": "ADDON_URLS",
+            "default_value": "",
+            "user_editable": true,
+            "rules": ""
+        }
+    ]
+}
